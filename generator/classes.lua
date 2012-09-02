@@ -135,8 +135,7 @@ function copy_classes(index)
 	for e in pairs(index) do
 		if e.label=='Class' then
 			e.xarg.cname = string.gsub(e.xarg.fullname, '::', '_LQT_')
-			if class_is_public(e)
-				and not e.xarg.fullname:match'%b<>' then
+			if class_is_public(e) and not e.xarg.fullname:match'%b<>' then
 				classes[e] = true
 			elseif not e.xarg.fullname:match'%b<>' then
 				ignore(e.xarg.fullname, 'not public')
@@ -150,6 +149,14 @@ function copy_classes(index)
 	templates.finish(index)
 	for c in pairs(classes) do
 		classlist[c.xarg.cname] = c
+		for func in pairs(index) do
+			if func.label:match'^Function' then
+				if func.xarg.member_of_class == c.xarg.fullname and func.xarg.abstract then
+					c.abstract = true
+					break
+				end
+			end
+		end
 	end
 end
 
@@ -421,7 +428,7 @@ local function generate_implicit_code(class_name, t)
 				
 				-- HACK: QVariant with 'char const*' argument - force it to QByteArray
 				if fullname == 'QVariant' and typ == 'char const*' then
-				    typ = 'QByteArray'
+					typ = 'QByteArray'
 				end
 				
 				local convert_code = 
@@ -494,6 +501,7 @@ function fill_wrapper_code(f)
 			defects = defects + 8 -- FIXME: arbitrary
 		end
 		local sget, sn = typesystem[f.xarg.member_of_class..'*'].get(stackn)
+		-- sget = sget:gsub('<(.+)>', '<lqt_glueclass_%1>') -- XXX
 		wrap = wrap .. '  ' .. f.xarg.member_of_class .. '* self = ' .. sget .. ';\n'
 		stackn = stackn + sn
 		wrap = wrap .. '  lqtL_selfcheck(L, self, "'..f.xarg.member_of_class..'");\n'
@@ -502,7 +510,18 @@ function fill_wrapper_code(f)
 			line, has_args = operators.call_line(f)
 			if not line then return nil end
 		else
-			line = 'self->'..f.xarg.fullname..'('
+			local classcname
+			for class in pairs(classes) do
+				if class.xarg.fullname == f.xarg.member_of_class then
+					classcname = class.xarg.cname
+					break
+				end
+			end
+			if not classcname then
+				ignore(f.xarg.fullname, 'could not find class cname', f.xarg.member_of_class)
+				return nil
+			end
+			line = '((lqt_glueclass_'..classcname:gsub('[<>]', '_')..'*)self)->'..f.xarg.fullname..'('
 		end
 	else
 		line = f.xarg.fullname..'('
@@ -599,7 +618,7 @@ end
 function print_wrappers()
 	for c in pairs(classes) do
 		local meta = {}
-		local wrappers = ''
+		local wrappers = 'class lqt_glueclass_'..c.xarg.cname..' : public '..c.xarg.fullname..' {\npublic:\n\n'
 		for _, f in ipairs(c.methods) do
 			-- FIXME: should we really discard virtual functions?
 			-- if the virtual overload in the shell uses rawget
@@ -608,7 +627,8 @@ function print_wrappers()
 			if f.wrapper_code and not f.ignore then
 				local out = 'static int lqt_bind'..f.xarg.id
 				..' (lua_State *L) {\n'.. f.wrapper_code .. '}\n'
-				if f.xarg.access=='public' then
+				-- XXX if f.xarg.access=='public' then
+				if f.xarg.access~='private' then
 					--print_meta(out)
 					wrappers = wrappers .. out .. '\n'
 					meta[f] = f.xarg.name
@@ -619,8 +639,8 @@ function print_wrappers()
 			for _, f in ipairs(c.constructors) do
 				if f.wrapper_code then
 					local out = 'static int lqt_bind'..f.xarg.id
-					    ..' (lua_State *L) {\n'.. f.wrapper_code .. '}\n'
-					if f.xarg.access=='public' then
+						..' (lua_State *L) {\n'.. f.wrapper_code .. '}\n'
+					if f.xarg.access=='public' then -- do not expose protected constructors
 						--print_meta(out)
 						wrappers = wrappers .. out .. '\n'
 						meta[f] = 'new'
@@ -631,14 +651,14 @@ function print_wrappers()
 		--local shellname = 'lqt_shell_'..string.gsub(c.xarg.fullname, '::', '_LQT_')
 		local lua_name = string.gsub(c.xarg.fullname, '::', '.')
 		local out = 'static int lqt_delete'..c.xarg.id..' (lua_State *L) {\n'
-		out = out ..'  '..c.xarg.fullname..' *p = static_cast<'
-			..c.xarg.fullname..'*>(lqtL_toudata(L, 1, "'..lua_name..'*"));\n'
+		out = out ..'  '..c.xarg.fullname..' *p = static_cast<lqt_glueclass_'
+			..c.xarg.cname..'*>(lqtL_toudata(L, 1, "'..lua_name..'*"));\n'
 		if c.public_destr then
 			out = out .. '  if (p) delete p;\n'
 		end
 		out = out .. '  lqtL_eraseudata(L, 1, "'..lua_name..'*");\n  return 0;\n}\n'
 		--print_meta(out)
-		wrappers = wrappers .. out .. '\n'
+		wrappers = wrappers .. out .. '\n};\n\n'
 		c.meta = meta
 		c.wrappers = wrappers
 	end
@@ -694,7 +714,7 @@ local print_metatable = function(c)
 		local disp = 'static int lqt_dispatcher_'..name..c.xarg.id..' (lua_State *L) {\n'
 		local testcode = {}
 		for tc, f in pairs(l) do
-			disp = disp..'  if ('..f.test_code..') return lqt_bind'..f.xarg.id..'(L);\n'
+			disp = disp..'  if ('..f.test_code..') return lqt_glueclass_'..c.xarg.cname..'::lqt_bind'..f.xarg.id..'(L);\n'
 			testcode[#testcode+1] = tc
 		end
 		-- disp = disp .. '  lua_settop(L, 0);\n'
@@ -710,7 +730,7 @@ local print_metatable = function(c)
 		local nn = operators.rename_operator(n)
 		metatable = metatable .. '  { "'..nn..'", lqt_dispatcher_'..nn..c.xarg.id..' },\n'
 	end
-	metatable = metatable .. '  { "delete", lqt_delete'..c.xarg.id..' },\n'
+	metatable = metatable .. '  { "delete", lqt_glueclass_'..c.xarg.cname..'::lqt_delete'..c.xarg.id..' },\n'
 	metatable = metatable .. '  { 0, 0 },\n};\n'
 	--print_meta(metatable)
 	wrappers = wrappers .. metatable .. '\n'
@@ -791,32 +811,32 @@ function print_single_class(c)
 QMetaObject lqt_shell_]]..n..[[::staticMetaObject;
 
 const QMetaObject *lqt_shell_]]..n..[[::metaObject() const {
-        //int oldtop = lua_gettop(L);
-        lqtL_pushudata(L, this, "]]..c.xarg.fullname..[[*");
-        lua_getfield(L, -1, LQT_OBJMETASTRING);
-        if (lua_isnil(L, -1)) {
-                lua_pop(L, 2);
-                return &]]..c.xarg.fullname..[[::staticMetaObject;
-        }
-        lua_getfield(L, -2, LQT_OBJMETADATA);
-        lqtL_touintarray(L);
-        //qDebug() << "copying qmeta object for slots in ]]..c.xarg.fullname..[[";
-        lqt_shell_]]..n..[[::staticMetaObject.d.superdata = &]]..c.xarg.fullname..[[::staticMetaObject;
-        lqt_shell_]]..n..[[::staticMetaObject.d.stringdata = lua_tostring(L, -2);
-        lqt_shell_]]..n..[[::staticMetaObject.d.data = (uint*)lua_touserdata(L, -1);
-        lqt_shell_]]..n..[[::staticMetaObject.d.extradata = 0; // slot_metaobj->d.extradata;
-        lua_setfield(L, LUA_REGISTRYINDEX, LQT_OBJMETADATA);
-        lua_setfield(L, LUA_REGISTRYINDEX, LQT_OBJMETASTRING);
-        lua_pop(L, 1);
-        //qDebug() << (lua_gettop(L) - oldtop);
-        return &lqt_shell_]]..n..[[::staticMetaObject;
+		//int oldtop = lua_gettop(L);
+		lqtL_pushudata(L, this, "]]..c.xarg.fullname..[[*");
+		lua_getfield(L, -1, LQT_OBJMETASTRING);
+		if (lua_isnil(L, -1)) {
+				lua_pop(L, 2);
+				return &]]..c.xarg.fullname..[[::staticMetaObject;
+		}
+		lua_getfield(L, -2, LQT_OBJMETADATA);
+		lqtL_touintarray(L);
+		//qDebug() << "copying qmeta object for slots in ]]..c.xarg.fullname..[[";
+		lqt_shell_]]..n..[[::staticMetaObject.d.superdata = &]]..c.xarg.fullname..[[::staticMetaObject;
+		lqt_shell_]]..n..[[::staticMetaObject.d.stringdata = lua_tostring(L, -2);
+		lqt_shell_]]..n..[[::staticMetaObject.d.data = (uint*)lua_touserdata(L, -1);
+		lqt_shell_]]..n..[[::staticMetaObject.d.extradata = 0; // slot_metaobj->d.extradata;
+		lua_setfield(L, LUA_REGISTRYINDEX, LQT_OBJMETADATA);
+		lua_setfield(L, LUA_REGISTRYINDEX, LQT_OBJMETASTRING);
+		lua_pop(L, 1);
+		//qDebug() << (lua_gettop(L) - oldtop);
+		return &lqt_shell_]]..n..[[::staticMetaObject;
 }
 
 int lqt_shell_]]..n..[[::qt_metacall(QMetaObject::Call call, int index, void **args) {
-        //qDebug() << "fake calling!";
-        index = ]]..c.xarg.fullname..[[::qt_metacall(call, index, args);
-        if (index < 0) return index;
-        return lqtL_qt_metacall(L, this, lqtSlotAcceptor_]]..module_name..[[, call, "]]..c.xarg.fullname..[[*", index, args);
+		//qDebug() << "fake calling!";
+		index = ]]..c.xarg.fullname..[[::qt_metacall(call, index, args);
+		if (index < 0) return index;
+		return lqtL_qt_metacall(L, this, lqtSlotAcceptor_]]..module_name..[[, call, "]]..c.xarg.fullname..[[*", index, args);
 }
 ]])
 	end
