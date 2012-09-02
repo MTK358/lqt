@@ -719,9 +719,8 @@ local print_metatable = function(c)
 		end
 		-- disp = disp .. '  lua_settop(L, 0);\n'
 		disp = disp .. '  const char * args = lqtL_getarglist(L);\n'
-		disp = disp .. '  lua_pushfstring(L, "%s(%s): incorrect or extra arguments, expecting: %s.", "' ..
-			c.xarg.fullname..'::'..n..'", args, '..string.format("%q", table.concat(testcode, ' or ')) .. ');\n'
-		disp = disp .. '  return lua_error(L);\n}\n'
+		disp = disp .. '  luaL_error(L, "%s(%s): incorrect or extra arguments, expecting: %s.", "' ..
+			c.xarg.fullname..'::'..n..'", args, '..string.format("%q", '('..table.concat(testcode, ') or (')..')') .. ');\n}\n'
 		--print_meta(disp)
 		wrappers = wrappers .. disp .. '\n'
 	end
