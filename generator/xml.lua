@@ -1,5 +1,3 @@
-#!/usr/bin/lua
-
 --[[
 
 Copyright (c) 2007-2008 Mauro Iazzi
@@ -27,6 +25,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 --]]
 
+-- isn't this actually taken from http://lua-users.org/wiki/LuaXml ?
 
 local parseargs, collect
 

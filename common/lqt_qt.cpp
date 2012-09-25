@@ -177,6 +177,19 @@ static int lqtL_children(lua_State *L) {
     return 1;
 }
 
+static int lqtL_lua_object_method_call_wrapper(lua_State *L) {
+    int numargs = lua_gettop(L) - 1;
+    lua_getupvalue(L, 0, 0);
+    lua_getupvalue(L, 0, 1);
+    for (int i=0; i<numargs; ++i) {
+        lua_pushvalue(L, i+1);
+    }
+    if (lua_pcall(L, numargs+2, 0, 0) != 0) {
+        fprintf(stderr, "error in Lua slot: %s\n", lua_tostring(L, -1));
+    }
+    return 0;
+}
+
 static int lqtL_connect(lua_State *L) {
     static int methodId = 0;
 
@@ -193,10 +206,28 @@ static int lqtL_connect(lua_State *L) {
     QObject* receiver;
     QString methodName;
 
-    if (lua_type(L, 3) == LUA_TFUNCTION) {
+    if (lua_type(L, 4) == LUA_TFUNCTION) {
         receiver = sender;
 
-        // simulate sender:__addmethod('LQT_SLOT_X(signature)', function()...end)
+        // simulate sender:__addmethod('LQT_SLOT_X(signature)', function(sender, ...) <function>(<recipient>, ...) end)
+        QMetaMethod m = senderMeta->method(idxS);
+        methodName = QString(m.signature()).replace(QRegExp("^[^\\(]+"), QString("LQT_SLOT_%1").arg(methodId++));
+
+        lua_getfield(L, 1, "__addmethod");
+        lua_pushvalue(L, 1);
+        lua_pushstring(L, qPrintable(methodName));
+        lua_pushvalue(L, 3);
+        lua_pushvalue(L, 4);
+        lua_pushcclosure(L, &lqtL_lua_object_method_call_wrapper, 2);
+        lua_call(L, 3, 0); // possible memory leak if this throws an error and
+                           // doesn't call the destructors of senderMeta and
+                           // methodName?
+        
+        methodName.prepend("1");
+    } else if (lua_type(L, 3) == LUA_TFUNCTION) {
+        receiver = sender;
+
+        // simulate sender:__addmethod('LQT_SLOT_X(signature)', <function>)
         QMetaMethod m = senderMeta->method(idxS);
         methodName = QString(m.signature()).replace(QRegExp("^[^\\(]+"), QString("LQT_SLOT_%1").arg(methodId++));
 

@@ -1,6 +1,7 @@
 #  Copyright (c) 2008 Peter Kuemmel 
 #  Copyright (c) 2008 Mauro Iazzi
 #  Copyright (c) 2011 Michal Kottman
+#  Copyright (c) 2012 Michael Kirsch
 #  
 #  Permission is hereby granted, free of charge, to any person
 #  obtaining a copy of this software and associated documentation
@@ -51,7 +52,7 @@ if(noqt)
 endif()
 
 find_package(Lua51 REQUIRED)
-find_program(LUA_CMD NAMES luajit lua lua5.1 lua51)
+find_program(LUA_CMD NAMES lua lua5.1 lua51) # for some reason LuaJIT 2.0.0-beta10 segfaults with some blacklist configurations
 
 if(WIN32)
 	if(MSVC)
@@ -76,92 +77,65 @@ add_subdirectory(cpptoxml)
 
 function(build_qt_lib_binding BINDING_HEADER)
 
-	string(TOLOWER ${BINDING_HEADER} BINDING_NAME)
+    if(UNIX)
+        set (PP_CONFIG ${CMAKE_SOURCE_DIR}/cpptoxml/parser/rpp/pp-qt-configuration)
+    else(UNIX)
+        set (PP_CONFIG ${CMAKE_SOURCE_DIR}/cpptoxml/parser/rpp/pp-qt-configuration-win)
+    endif(UNIX)
 
-	# hardcoded in generator.lua
-	set (LQT_GEN_DIR ${CMAKE_BINARY_DIR}/${BINDING_NAME}_src)
-	file(MAKE_DIRECTORY ${LQT_GEN_DIR})
+    set(BINDING_NAME ${BINDING_HEADER})
 
-	set (BINDING_SRC ${LQT_GEN_DIR}/${BINDING_NAME}_merged_build.cpp)
-	set_source_files_properties(${BINDING_SRC} PROPERTIES  GENERATED TRUE)
+	set(MODULE_WORK_DIR ${CMAKE_BINARY_DIR}/${BINDING_NAME}_tmp)
+	file(MAKE_DIRECTORY ${MODULE_WORK_DIR})
 
-	if (UNIX)
-		set (PP_CONFIG ${CMAKE_SOURCE_DIR}/cpptoxml/parser/rpp/pp-qt-configuration)
-	else()
-		set (PP_CONFIG ${CMAKE_SOURCE_DIR}/cpptoxml/parser/rpp/pp-qt-configuration-win)
-	endif()
+    set (GEN_XML ${MODULE_WORK_DIR}/xml.xml)
+    set (GEN_BINDSPEC ${MODULE_WORK_DIR}/bindspec.lua)
+	set (GEN_SRC ${MODULE_WORK_DIR}/module.cpp)
+	set_source_files_properties(${GENERATED_MODULE_SRC} PROPERTIES  GENERATED TRUE)
 
-	if(NOT REUSE_FILES)
-		set (GEN_XML ${LQT_GEN_DIR}/${BINDING_NAME}.xml)
-		add_custom_target(generate_${BINDING_NAME}_xml
-							COMMAND cpptoxml
-								${BINDING_HEADER}
-								-C ${PP_CONFIG}
-								-Q ${QT_INCLUDE_DIR} 
-								-o ${GEN_XML}
-							COMMENT "Generating XML: running cpptoxml on ${BINDING_NAME} "
-							VERBATIM)
+    add_custom_command(OUTPUT ${GEN_XML}
+                      COMMAND cpptoxml
+                          ${BINDING_HEADER}
+                          -C ${PP_CONFIG}
+                          -Q ${QT_INCLUDE_DIR} 
+                          -o ${GEN_XML}
+                      COMMENT "Generating XML: running cpptoxml on ${BINDING_NAME}"
+                      VERBATIM)
 
-		math(EXPR MAX ${ARGC}-1)
-		if(MAX)
-			foreach(I RANGE 1 ${MAX})
-				string(TOLOWER ${ARGV${I}} DEPNAME)
-				set(${BINDING_NAME}_TYPES ${${BINDING_NAME}_TYPES} -t ${DEPNAME}_src/${DEPNAME}_types.lua)
-				set(${BINDING_NAME}_DEPENDS ${${BINDING_NAME}_DEPENDS} generate_${DEPNAME}_cpp)
-			endforeach()
-		endif()
-		
-		add_custom_target(generate_${BINDING_NAME}_cpp
-							COMMAND ${LUA_CMD}
-								"${CMAKE_SOURCE_DIR}/generator/generator.lua" 
-								${GEN_XML} 
-								-i ${BINDING_HEADER} -i lqt_qt.hpp 
-								-n ${BINDING_NAME} 
-								-t ${CMAKE_SOURCE_DIR}/generator/qtypes.lua
-								${${BINDING_NAME}_TYPES}
-								-f ${CMAKE_SOURCE_DIR}/generator/qt_internal.lua
-							COMMENT "Generating binding code with Lua"
-							VERBATIM)
-	else()
-		add_custom_target(generate_${BINDING_NAME}_xml 	COMMAND
-							COMMENT "Reusing old XML on ${BINDING_NAME} "
-							VERBATIM)
-		add_custom_target(generate_${BINDING_NAME}_cpp
-							COMMENT "Reusing old binding code with Lua"
-							VERBATIM)
-	endif()
+    add_custom_command(OUTPUT ${GEN_BINDSPEC}
+                       MAIN_DEPENDENCY "${CMAKE_SOURCE_DIR}/generator/xml2bindspec.lua"
+                       DEPENDS ${GEN_XML}
+                               "${CMAKE_SOURCE_DIR}/generator/templates.lua"
+                               "${CMAKE_SOURCE_DIR}/generator/blacklist.lua"
+                       COMMAND ${LUA_CMD}
+                           "${CMAKE_SOURCE_DIR}/generator/xml2bindspec.lua" 
+                           --module=${BINDING_NAME}
+                           --in=${GEN_XML}
+                           --out=${GEN_BINDSPEC}
+                           --ignore=${CMAKE_BINARY_DIR}/${BINDING_NAME}-ignore.txt
+                           --header=${BINDING_HEADER}
+                       COMMENT "Generating bindspec file from XML"
+                       VERBATIM)
+
+    add_custom_command(OUTPUT ${GEN_SRC}
+                       MAIN_DEPENDENCY "${CMAKE_SOURCE_DIR}/generator/bindgen.lua"
+                       DEPENDS ${GEN_BINDSPEC}
+                       COMMAND ${LUA_CMD}
+                           "${CMAKE_SOURCE_DIR}/generator/bindgen.lua" 
+                           ${GEN_BINDSPEC} 
+                           ${GEN_SRC} 
+                       COMMENT "Generating binding code from bindspec"
+                       VERBATIM)
 
 	set(COMMON COMMON_${BINDING_NAME})
 	file(GLOB ${COMMON}_SRC ${CMAKE_SOURCE_DIR}/common/*.cpp)
 	file(GLOB ${COMMON}_HPP ${CMAKE_SOURCE_DIR}/common/*.hpp)
 
-
-	set(${BINDING_NAME}_GENERATED ${LQT_GEN_DIR}/${BINDING_NAME}_enum.cpp
-									${LQT_GEN_DIR}/${BINDING_NAME}_meta.cpp
-									${LQT_GEN_DIR}/${BINDING_NAME}_slot.cpp)
-	set_source_files_properties(${${BINDING_NAME}_GENERATED} PROPERTIES GENERATED TRUE)
-
-	if(nomerge)
-		#TODO fix this build process:
-		#	1. cmake ../lqt -Dnomerge=1
-		#	2. make -> will generate cpp files but they are not part of the Makefile (GLOB was at 1.)
-		# 	3. cmake ../lqt -Dnomerge=1 -> GLOB now finds the generated cpp files
-		#	4. make
-		file(GLOB BINDING_SRC ${LQT_GEN_DIR}/*.cpp) 
-		set(${COMMON}_SRC)
-		list(REMOVE_ITEM BINDING_SRC ${LQT_GEN_DIR}/${BINDING_NAME}_merged_build.cpp)
-	else()				
-		set(${COMMON}_SRC ${${COMMON}_SRC}	${${BINDING_NAME}_GENERATED})
-	endif()
-
-	qt4_wrap_cpp(${COMMON}_MOC ${LQT_GEN_DIR}/${BINDING_NAME}_slot.hpp)
+	qt4_wrap_cpp(MOC_GEN_SRC ${GEN_SRC})
 	
 	include_directories(${CMAKE_SOURCE_DIR}/common ${LUA_INCLUDE_DIR} ${QT_INCLUDES})
 
-	add_library(${BINDING_NAME} MODULE ${BINDING_SRC}
-											${${COMMON}_SRC}
-											${${COMMON}_HPP} 
-											${${COMMON}_MOC})
+	add_library(${BINDING_NAME} MODULE ${GEN_SRC} ${MOC_GEN_SRC})
 											
 	target_link_libraries(${BINDING_NAME} ${QT_LIBRARIES} ${LUA_LIBS_FOR_MODULE})
 	set_target_properties(${BINDING_NAME} PROPERTIES PREFIX "" COMPILE_DEFINITIONS "MODULE_${BINDING_NAME}")
@@ -169,34 +143,26 @@ function(build_qt_lib_binding BINDING_HEADER)
 	if(LQT_BUILDIN_CPPTOXML)
 		add_dependencies(generate_${BINDING_NAME}_xml  cpptoxml)
 	endif()
-
-	add_dependencies(generate_${BINDING_NAME}_cpp  generate_${BINDING_NAME}_xml ${${BINDING_NAME}_DEPENDS})
-	add_dependencies(${BINDING_NAME} generate_${BINDING_NAME}_cpp)
 endfunction()
 
-if(noqt)
-	include_directories(${CMAKE_CURRENT_SOURCE_DIR}/test/noqt)
-	build_qt_lib_binding(noqt)
-else()
-	build_qt_lib_binding(QtCore)
-	build_qt_lib_binding(QtNetwork QtCore)
-	build_qt_lib_binding(QtGui QtNetwork QtCore)
-	build_qt_lib_binding(QtScript QtGui QtNetwork QtCore)
-	build_qt_lib_binding(QtOpenGL QtGui QtNetwork QtCore)
-	build_qt_lib_binding(QtSvg QtScript QtGui QtNetwork QtCore)
-	build_qt_lib_binding(QtXml QtSvg QtScript QtGui QtNetwork QtCore)
-	build_qt_lib_binding(QtXmlPatterns QtCore QtXml)
-	build_qt_lib_binding(QtUiTools QtCore QtGui QtXml) 
-	build_qt_lib_binding(QtWebKit QtXmlPatterns QtSvg QtScript QtOpenGL QtGui QtNetwork QtCore QtXml)
-	build_qt_lib_binding(QtSql QtCore)
-	# TODO
-	#build_qt_lib_binding(QtScriptTools) # 4.5 only
-	#build_qt_lib_binding(Phonon)
-endif()
+build_qt_lib_binding(QtCore)
 
-
-
-
-
-
-
+#if(noqt)
+	#include_directories(${CMAKE_CURRENT_SOURCE_DIR}/test/noqt)
+	#build_qt_lib_binding(noqt)
+#else()
+	#build_qt_lib_binding(QtCore)
+	#build_qt_lib_binding(QtNetwork QtCore)
+	#build_qt_lib_binding(QtGui QtNetwork QtCore)
+	#build_qt_lib_binding(QtScript QtGui QtNetwork QtCore)
+	#build_qt_lib_binding(QtOpenGL QtGui QtNetwork QtCore)
+	#build_qt_lib_binding(QtSvg QtScript QtGui QtNetwork QtCore)
+	#build_qt_lib_binding(QtXml QtSvg QtScript QtGui QtNetwork QtCore)
+	#build_qt_lib_binding(QtXmlPatterns QtCore QtXml)
+	#build_qt_lib_binding(QtUiTools QtCore QtGui QtXml) 
+	#build_qt_lib_binding(QtWebKit QtXmlPatterns QtSvg QtScript QtOpenGL QtGui QtNetwork QtCore QtXml)
+	#build_qt_lib_binding(QtSql QtCore)
+	## TODO
+	##build_qt_lib_binding(QtScriptTools) # 4.5 only
+	##build_qt_lib_binding(Phonon)
+#endif()
