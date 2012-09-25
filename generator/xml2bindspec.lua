@@ -115,8 +115,11 @@ for elem in pairs(idindex) do
     elementsbyid[elem.xarg.id] = elem
 end--}}}
 
--- get the tamplate substitutions list
+-- get the template substitutions list
 local templates = require 'templates'
+
+-- get the custom types list
+local customtypes = require 'customtypes'
 
 -- get the blacklist and convert it from an array to a set
 local blacklist = require 'blacklist'--{{{
@@ -225,7 +228,7 @@ local function element2spec(elem, parentspec)
             local argtbl = {}
             for _, arg in ipairs(elem) do
                 if arg.label == 'Argument' then
-                    table.insert(argtbl, arg.xarg.type_name)
+                    table.insert(argtbl, arg.xarg.type_name..(arg.xarg.defaultvalue and '=' or ''))
                 end
             end
             if ismethod and elem.xarg.fullname == elem.xarg.member_of_class..'::'..elem.xarg.member_of_class:gsub('.*::', ''):gsub('%b<>', '') then
@@ -250,7 +253,7 @@ local function element2spec(elem, parentspec)
             for _, arg in ipairs(elem) do
                 if arg.label == 'Argument' then
                     if first then first = false else spec.sig = spec.sig..',' end
-                    spec.sig = spec.sig..arg.xarg.type_name
+                    spec.sig = spec.sig..arg.xarg.type_name..(arg.xarg.defaultvalue and '=' or '')
                 end
             end
             spec.sig = spec.sig..')'
@@ -292,6 +295,12 @@ local function element2spec(elem, parentspec)
     end
     
     assert(spec, 'unknown node type: '..elem.label)
+
+    if spec.cppname and customtypes[spec.cppname] then--{{{
+        for i, item in ipairs(customtypes[spec.cppname]) do
+            table.insert(spec, item);
+        end
+    end--}}}
     
     -- process templates
     if spec.name and spec.cppname and spec.cppname:match('>$') then--{{{

@@ -213,7 +213,7 @@ return {
     'QByteArray::erase',
     'QByteArray::constBegin',
     'QByteArray::constEnd',
-    'QByteArray::constData',
+    --'QByteArray::constData',
     'QByteArray::insert',
     'QByteArray::last',
     'QByteArray::back',

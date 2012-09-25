@@ -107,6 +107,7 @@ function(build_qt_lib_binding BINDING_HEADER)
                        DEPENDS ${GEN_XML}
                                "${CMAKE_SOURCE_DIR}/generator/templates.lua"
                                "${CMAKE_SOURCE_DIR}/generator/blacklist.lua"
+                               "${CMAKE_SOURCE_DIR}/generator/customtypes.lua"
                        COMMAND ${LUA_CMD}
                            "${CMAKE_SOURCE_DIR}/generator/xml2bindspec.lua" 
                            --module=${BINDING_NAME}

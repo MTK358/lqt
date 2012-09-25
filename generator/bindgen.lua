@@ -300,26 +300,23 @@ static void _bindgen_pushref]]..id..[[(lua_State *L, ]]..fixedcppname..[[ *value
 ]])
     if base then
         writesrcbodyheader([[
-    lua_newtable(L);
-    lua_pushvalue(L, -1);
-    lua_rawgeti(L, LUA_REGISTRYINDEX, _bindgen_classtable]]..classids[base]..[[);
-    lua_pushvalue(L, -2);
-    lua_rawsetf(L, -2, "__index");
-    lua_pop(L, 1);
-    _bindgen_classtable]]..id..[[ = luaL_ref(L, LUA_REGISTRYINDEX);
-    lua_newtable(L);
-    lua_pushvalue(L, -1);
-    _bindgen_instancemt]]..id..[[ = luaL_ref(L, LUA_REGISTRYINDEX);
-    lua_newtable(L);
-    lua_pushvalue(L, -1);
-    _bindgen_classmt]]..id..[[ = luaL_ref(L, LUA_REGISTRYINDEX);
-    lua_setmetatable(L, -3);
-    lua_pushvalue(L, -2);
-    lua_rawsetf(L, -3, "__index");
-    lua_pushcfunction(L, (&_bindgen_instance_metatable___gc<]]..fixedcppname..[[ >));
-    lua_rawsetf(L, -2, "__gc");
-    lua_pop(L, 1);
-    assert(lua_gettop(L) == 2);
+    lua_newtable(L);                                                   // ct
+    lua_pushvalue(L, -1);                                              // ct ct
+    _bindgen_classtable]]..id..[[ = luaL_ref(L, LUA_REGISTRYINDEX);    // ct
+    lua_newtable(L);                                                   // ct imt
+    lua_pushvalue(L, -1);                                              // ct imt imt
+    _bindgen_instancemt]]..id..[[ = luaL_ref(L, LUA_REGISTRYINDEX);    // ct imt
+    lua_newtable(L);                                                   // ct imt cmt
+    lua_pushvalue(L, -1);                                              // ct imt cmt cmt
+    _bindgen_classmt]]..id..[[ = luaL_ref(L, LUA_REGISTRYINDEX);       // ct imt cmt
+    lua_rawgeti(L, LUA_REGISTRYINDEX, _bindgen_classtable]]..classids[base]..[[); // ct imt cmt basect
+    lua_rawsetf(L, -2, "__index");                                     // ct imt cmt
+    lua_setmetatable(L, -3);                                           // ct imt
+    lua_pushvalue(L, -2);                                              // ct imt ct
+    lua_rawsetf(L, -2, "__index");                                     // ct imt
+    lua_pushcfunction(L, (&_bindgen_instance_metatable___gc<]]..fixedcppname..[[ >));      // ct imt gc
+    lua_rawsetf(L, -2, "__gc");                                        // ct imt
+    lua_pop(L, 2);                                                     // (none)
 
 ]])
     else
@@ -339,7 +336,6 @@ static void _bindgen_pushref]]..id..[[(lua_State *L, ]]..fixedcppname..[[ *value
     lua_pushcfunction(L, (&_bindgen_instance_metatable___gc<]]..fixedcppname..[[ >));      // ct imt gc
     lua_rawsetf(L, -2, "__gc");                                        // ct imt
     lua_pop(L, 2);                                                     // (none)
-    assert(lua_gettop(L) == 2);
 
 ]])
     end
@@ -477,27 +473,19 @@ end--}}}
 
 -- substitute special syntax with generated is/to/check/push code
 local function process_wrapped_function_code(code)--{{{
-    local i = 1
-    while true do
-        i = code:match('()%@', i)
-        if not i then break end
-        if code:sub(i, i+1) ~= '@@' then
-            endpos = code:match('()%@', i+1)
-            if endpos then
-                local bindgencmd = code:sub(i+1, endpos-1)
-                local replacement
-                --TODO implement
-                assert(replacement, 'invalid "@" command in C++ code')
-                code = code:sub(1, i-1)..replacement..code:sub(endpos+1)
-                i = i + #replacement
-            else
-                i = i + 1
-            end
-        else
-            i = i + 2
+    local newcode, prevend = '', 1
+    for istart, str, iend in code:gmatch('()@(.-)@()') do
+        newcode = newcode..code:sub(prevend, istart-1)
+        if str ~= '' then
+            local op, typename, argstr = str:match('^%s*([a-z]+)%s+(.-)%s*%((.*)%)%s*$')
+            local args = {}
+            for arg in comma_separated_type_iterator(argstr) do args[#args+1] = arg end
+            newcode = newcode..gettype(typename)[op](unpack(args))
         end
+        prevend = iend
     end
-    return code
+    newcode = newcode..code:sub(prevend)
+    return newcode
 end--}}}
 
 -- convert a C++ signature (or multiple "|"-separated ones for overloading)
@@ -514,13 +502,29 @@ local function process_signature(sigs, templatesubs)--{{{
     repeat
         local done = true
         for k, v in ipairs(sigstbl) do
-            local tmp1, tmp2 = v:match('[,(].-()=.-([,)].*)')
+            if v:match('=') then
+                local name, args = v:match('^(.-)(%b())%s*$')
+                local newargs = {}
+                for arg in comma_separated_type_iterator(args:sub(2, -2)) do
+                    if arg:match('=') then
+                        local newsig1 = name..'('..table.concat(newargs, ',')..')'
+                        table.insert(newargs, arg:match('^(.-)='))
+                        local newsig2 = name..'('..table.concat(newargs, ',')..')'
+                        sigstbl[k] = newsig2
+                        table.insert(sigstbl, k, newsig1)
+                    else
+                        table.insert(newargs, arg)
+                    end
+                end
+            end
+            --[[local tmp1, tmp2 = v:match('[,(].-()=.-([,)].*)')
             if tmp1 then
+                print(v:sub(1, tmp1-1), 'dsfdsfsdfd', v:sub(1, tmp1-1)..tmp2)
                 sigstbl[k] = v:sub(1, tmp1-1)
                 table.insert(sigstbl, k+1, v:sub(1, tmp1-1)..tmp2)
                 done = false
                 break
-            end
+            end]]
         end
     until done
     local luasigs = {}
@@ -689,13 +693,13 @@ local function bind_class(spec, templatesubs)--{{{
         for i, overload in ipairs(overloads) do
             writesrcheader('    ')
             if i ~= 1 then writesrcheader('else ') end
-            writesrcheader('if (lua_gettop(L) == '..#overload.args)
+            writesrcheader('if (lua_gettop(L) == '..#overload.args+1)
             for j, arg in ipairs(overload.args) do
-                writesrcheader(' && '..generate_is_code(arg.typename, 'L', j))
+                writesrcheader(' && '..generate_is_code(arg.typename, 'L', j+1))
             end
             writesrcheader(') {\n')
             local callcode = 'new '..cppname:gsub('>>', '> >'):gsub('>>', '> >')..'('
-            for j, arg in ipairs(overload.args) do callcode = callcode..(j==1 and '' or ',')..generate_to_code(arg.typename, 'L', j) end
+            for j, arg in ipairs(overload.args) do callcode = callcode..(j==1 and '' or ',')..generate_to_code(arg.typename, 'L', j+1) end
             writesrcheader('        '..generate_push_code(cppname..'*', 'L', callcode..')'), true)
             writesrcheader('\n        return 1; }\n')
         end
@@ -770,6 +774,19 @@ local function bind_template(spec, templatesubs)--{{{
     printdebug('end template')
 end--}}}
 
+local function bind_customtype(spec)--{{{
+    for _, typename in ipairs(type(spec.typename)=='table' and spec.typename or {spec.typename}) do
+        types[typename] = {
+            is = spec.is,
+            to = spec.to,
+            check = spec.check,
+            push = spec.push,
+            luatype = spec.luatype,
+            preference = spec.preference,
+        }
+    end
+end--}}}
+
 generate = function(subspec, templatesubs)--{{{
     if type(subspec) == 'string' then
         bind_function(subspec, templatesubs)
@@ -788,6 +805,8 @@ generate = function(subspec, templatesubs)--{{{
         printdebug('end namespace', subspec.name)
     elseif subspec[0] == 'template' then
         bind_template(subspec, templatesubs)
+    elseif subspec[0] == 'customtype' then
+        bind_customtype(subspec)
     else
         error('invalid binding type "'..tostring(subspec[0])..'"')
     end
@@ -862,8 +881,6 @@ extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
 }
-#undef NDEBUG
-#include <cassert>
 
 void lua_rawgetf(lua_State *L, int index, const char *key) {
     lua_getfield(L, index, key);
