@@ -138,7 +138,7 @@ return {
     'QString::fromWCharArray',
     'QListData',
     'QModelIndex::internalPointer',
-    'QCoreApplication::QCoreApplication',
+    'QCoreApplicationPrivate',
     'QCoreApplication::compressEvent',
     'QCoreApplication::filterEvent',
     'QCoreApplication::removeTranslator',
@@ -158,12 +158,10 @@ return {
     'QObjectData',
     'QObjectPrivate',
     'QTextCodec::ConverterState',
-    'QCoreApplication::QCoreApplication',
     'QObjectCleanupHandler',
     'QXmlStreamStringRef::string',
     'QAnimationDriver',
-    'QEventLoop',
-    'QCoreApplication',
+    'QEventLoop::QEventLoop',
     'QFileSystemWatcher',
     'QLatin1Char::toLatin1',
     'QStringRef::compare',
@@ -279,4 +277,5 @@ return {
     'QSet<T>',
     'QSet<QAbstractState*>',
     'Qt::Modifier',
+    'QObject::connect', -- custom reimplementation
 }

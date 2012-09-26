@@ -115,6 +115,7 @@ function(build_qt_lib_binding BINDING_HEADER)
                            --out=${GEN_BINDSPEC}
                            --ignore=${CMAKE_BINARY_DIR}/${BINDING_NAME}-ignore.txt
                            --header=${BINDING_HEADER}
+                           "--header=${CMAKE_SOURCE_DIR}/common/lqt.hpp"
                        COMMENT "Generating bindspec file from XML"
                        VERBATIM)
 
@@ -128,15 +129,16 @@ function(build_qt_lib_binding BINDING_HEADER)
                        COMMENT "Generating binding code from bindspec"
                        VERBATIM)
 
-	set(COMMON COMMON_${BINDING_NAME})
-	file(GLOB ${COMMON}_SRC ${CMAKE_SOURCE_DIR}/common/*.cpp)
-	file(GLOB ${COMMON}_HPP ${CMAKE_SOURCE_DIR}/common/*.hpp)
+	# set(COMMON COMMON_${BINDING_NAME})
+    # file(GLOB ${COMMON}_SRC ${CMAKE_SOURCE_DIR}/common/*.cpp)
+    # file(GLOB ${COMMON}_HPP ${CMAKE_SOURCE_DIR}/common/*.hpp)
 
 	qt4_wrap_cpp(MOC_GEN_SRC ${GEN_SRC})
+    qt4_wrap_cpp(MOC_LQT_H ${CMAKE_SOURCE_DIR}/common/lqt.hpp)
 	
 	include_directories(${CMAKE_SOURCE_DIR}/common ${LUA_INCLUDE_DIR} ${QT_INCLUDES})
 
-	add_library(${BINDING_NAME} MODULE ${GEN_SRC} ${MOC_GEN_SRC})
+    add_library(${BINDING_NAME} MODULE ${GEN_SRC} ${MOC_GEN_SRC} ${MOC_LQT_H} ${CMAKE_SOURCE_DIR}/common/lqt.cpp)
 											
 	target_link_libraries(${BINDING_NAME} ${QT_LIBRARIES} ${LUA_LIBS_FOR_MODULE})
 	set_target_properties(${BINDING_NAME} PROPERTIES PREFIX "" COMPILE_DEFINITIONS "MODULE_${BINDING_NAME}")

@@ -70,13 +70,13 @@ local function comma_separated_type_iterator(str)--{{{
     return function ()
         local start = cur
         while true do
-            local match = str:match('^%b<>()', start) or str:match('%b()()', start) or str:match('^[^,<>]()', start)
+            local match = str:match('^%b<>()', start) or str:match('%b()()', start) or str:match('^[^,<(]()', start)
             if match then
                 start = match
             else
                 local substr = str:sub(cur, start-1)
                 cur = start
-                cur = str:match(',+()', cur) or cur
+                cur = str:match(',()', cur) or cur
                 return #substr~=0 and substr or nil
             end
         end
@@ -300,6 +300,16 @@ local function element2spec(elem, parentspec)
         for i, item in ipairs(customtypes[spec.cppname]) do
             table.insert(spec, item);
         end
+        for k, v in pairs(customtypes[spec.cppname]) do
+            if type(k) ~= 'number' then
+                spec[k] = v
+            end
+        end
+        --if customtypes[spec.cppname].wrappedctor and spec.ctor then
+            --spec.ctor = {
+                --code = customtypes[spec.cppname].wrappedctor,
+            --}
+        --end
     end--}}}
     
     -- process templates

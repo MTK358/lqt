@@ -55,7 +55,7 @@ return {
         'Qt::MatchFlag',
         'Qt::DropAction',
         --'QTextCodec::ConversionFlag',
-        --'QEventLoop::ProcessEventsFlag',
+        'QEventLoop::ProcessEventsFlag',
         'QDir::SortFlag',
         'QDir::Filter',
         'QTextStream::NumberFlag',

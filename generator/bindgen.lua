@@ -269,12 +269,22 @@ static bool _bindgen_isref]]..id..[[(lua_State *L, int index) {
     if (type != LUA_TUSERDATA) return false;
     lua_rawgeti(L, LUA_REGISTRYINDEX, _bindgen_instancemt]]..id..[[);
     lua_getmetatable(L, index>0 ? index : index-1);
-    if (! lua_rawequal(L, -1, -2)) {
+    if (lua_rawequal(L, -1, -2)) {
         lua_pop(L, 2);
-        return false;
+        return true;
     }
-    lua_pop(L, 2);
-    return true;
+    while (true) {
+        lua_rawgeti(L, -1, 1);
+        if (lua_type(L, -1) == LUA_TNIL) {
+            lua_pop(L, 3);
+            return false;
+        }
+        lua_remove(L, -2);
+        if (lua_rawequal(L, -1, -2)) {
+            lua_pop(L, 2);
+            return true;
+        }
+    }
 }
 static ]]..fixedcppname..[[* _bindgen_toref]]..id..[[(lua_State *L, int index) {
     _BindgenUserdata<]]..fixedcppname..[[ > *ud = (_BindgenUserdata<]]..fixedcppname..[[ >*) lua_touserdata(L, index);
@@ -306,6 +316,8 @@ static void _bindgen_pushref]]..id..[[(lua_State *L, ]]..fixedcppname..[[ *value
     lua_newtable(L);                                                   // ct imt
     lua_pushvalue(L, -1);                                              // ct imt imt
     _bindgen_instancemt]]..id..[[ = luaL_ref(L, LUA_REGISTRYINDEX);    // ct imt
+    lua_rawgeti(L, LUA_REGISTRYINDEX, _bindgen_instancemt]]..classids[base]..[[); // ct imt baseimt
+    lua_rawseti(L, -2, 1);                                             // ct imt
     lua_newtable(L);                                                   // ct imt cmt
     lua_pushvalue(L, -1);                                              // ct imt cmt cmt
     _bindgen_classmt]]..id..[[ = luaL_ref(L, LUA_REGISTRYINDEX);       // ct imt cmt
@@ -414,13 +426,13 @@ local function comma_separated_type_iterator(str)--{{{
     return function ()
         local start = cur
         while true do
-            local match = str:match('^%b<>()', start) or str:match('%b()()', start) or str:match('^[^,<>]()', start)
+            local match = str:match('^[^,<(]()', start) or str:match('^%b<>()', start) or str:match('^%b()()', start)
             if match then
                 start = match
             else
                 local substr = str:sub(cur, start-1)
                 cur = start
-                cur = str:match(',+()', cur) or cur
+                cur = str:match(',()', cur) or cur
                 return #substr~=0 and substr or nil
             end
         end
@@ -684,7 +696,7 @@ local function bind_class(spec, templatesubs)--{{{
     if spec.cppcode_pre then writesrcheader(process_wrapped_function_code(spec.cppcode_pre)) end
     if spec.cppcode_post then writesrcfooter(process_wrapped_function_code(spec.cppcode_post)) end
 
-    if spec.ctor then
+    if type(spec.ctor) == 'string' then
         printdebug('constructor', spec.ctor)
         local overloads = process_signature(spec.ctor, templatesubs)
         local id = uniqueid()
@@ -708,43 +720,36 @@ local function bind_class(spec, templatesubs)--{{{
         writesrcbody('    lua_pushcfunction(L, &_BindgenConstructorWrapper'..id..'::wrapper);\n')
         writesrcbody('    lua_rawsetf(L, -2, "__call");\n')
         writesrcbody('    lua_pop(L, 1);\n')
-    end
-
-    --[[
-    if spec.ctors then
-        local ctorsigs = {}
-        for _, params in ipairs(spec.ctors) do
-            local t = {}
-            for arg in comma_separated_type_iterator(params) do
-                arg = arg:gsub('^(.-[%w_:]+[^%w_:]+)[%w_]+$', '%1') -- remove the name
-                table.insert(t, substitute_templates(arg, templatesubs))
-            end
-            table.insert(ctorsigs, t)
-        end
+    elseif type(spec.ctor) == 'table' then
+        printdebug('wrapped constructor')
         local id = uniqueid()
-        writesrcheader('struct _BindgenConstructorWrapper'..id..' : public '..spec.cppname..' {\n')
-        writesrcheader('static int wrapper(lua_State *L) {\n')
-        for i = 1, #ctorsigs do
-            writesrcheader('    ')
-            if i ~= 1 then writesrcheader('else ') end
-            writesrcheader('if (lua_gettop(L) == '..#ctorsigs[i]+1)
-            for j = 1, #ctorsigs[i] do
-                print(ctorsigs[i][j])
-                writesrcheader(' && '..generate_is_code(ctorsigs[i][j], 'L', j+1))
+        if next(templatesubs) then
+            writesrcheader('template <')
+            local first = true
+            for k, v in pairs(templatesubs) do
+                if first then first = false else writesrcheader(', ') end
+                writesrcheader('typename '..k)
             end
-            writesrcheader(') {\n')
-            local callcode = 'new '..cppname..'('
-            for j = 1, #ctorsigs[i] do callcode = callcode..(j==1 and '' or ',')..generate_to_code(ctorsigs[i][j], 'L', j+1) end
-            writesrcheader('        '..generate_push_code(cppname..'*', 'L', callcode..')'), true)
-            writesrcheader('\n        return 1; }\n')
+            writesrcheader(' >\n')
         end
-        writesrcheader('    return luaL_error(L, "improper constructor args");\n}};\n\n')
+        writesrcheader('int _bindgen_wrappedfunction_'..id..'(lua_State *L) {\n')
+        writesrcheader(process_wrapped_function_code(spec.ctor.code))
+        writesrcheader('}\n\n')
         writesrcbody('    lua_rawgeti(L, LUA_REGISTRYINDEX, _bindgen_classmt'..classids[cppname]..');\n')
-        writesrcbody('    lua_pushcfunction(L, &_BindgenConstructorWrapper'..id..'::wrapper);\n')
+        writesrcbody('    lua_pushcfunction(L, &_bindgen_wrappedfunction_'..id)
+        if next(templatesubs) then
+            writesrcheader('<')
+            local first = true
+            for k, v in pairs(templatesubs) do
+                if first then first = false else writesrcheader(', ') end
+                writesrcheader(v)
+            end
+            writesrcheader(' >\n')
+        end
+        writesrcbody(');\n')
         writesrcbody('    lua_rawsetf(L, -2, "__call");\n')
         writesrcbody('    lua_pop(L, 1);\n')
     end
-    --]]
     
     writesrcbody('    lua_rawgeti(L, LUA_REGISTRYINDEX, _bindgen_classtable'..classids[cppname]..');\n')
     
